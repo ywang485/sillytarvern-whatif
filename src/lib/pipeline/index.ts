@@ -25,9 +25,7 @@ async function updateProgress(
 }
 
 export async function createStory(
-  fileBuffer: Buffer,
   fileName: string,
-  mimeType: string,
   branchesPerChapter: number,
   protagonistNameOverride?: string
 ): Promise<string> {
@@ -139,6 +137,10 @@ export async function runPipeline(
     const BATCH_SIZE = 3
     const chapters = [...structure.chapters]
 
+    // Track the world state at the end of the last processed chapter so each
+    // batch of branches knows where the previous bottleneck left off.
+    let previousBottleneckWorldState: string | null = null
+
     for (let i = 0; i < chapters.length; i += BATCH_SIZE) {
       const batch = chapters.slice(i, i + BATCH_SIZE)
       const batchEnd = Math.min(i + BATCH_SIZE, chapters.length)
@@ -151,12 +153,16 @@ export async function runPipeline(
         batch,
         characters,
         branchesPerChapter,
-        resolvedProtagonist
+        resolvedProtagonist,
+        previousBottleneckWorldState
       )
 
       for (let j = 0; j < updatedBatch.length; j++) {
         chapters[i + j] = updatedBatch[j]
       }
+
+      // The last chapter in this batch sets the entry state for the next batch.
+      previousBottleneckWorldState = batch[batch.length - 1].bottleneck.worldStateAfter
     }
 
     structure.chapters = chapters

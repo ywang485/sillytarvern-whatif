@@ -1,7 +1,8 @@
 'use client'
 
-import { useReducer } from 'react'
-import type { FullStoryData, PlayerState, PlayerAction } from '@/types'
+import { useReducer, useState, useCallback } from 'react'
+import type { FullStoryData, PlayerState, PlayerAction, NarrativeStructure } from '@/types'
+import { PENDING_TEXT } from '@/types'
 import { SceneDisplay } from './SceneDisplay'
 import { ChoicePanel } from './ChoicePanel'
 
@@ -30,9 +31,12 @@ interface Props {
 }
 
 export function PlayerShell({ story }: Props) {
-  const { narrative, characters, meta } = story
+  const { characters, meta } = story
+  const totalChapters = story.narrative.chapters.length
+
+  // Local mutable copy of narrative so we can patch in generated text
+  const [narrative, setNarrative] = useState<NarrativeStructure>(story.narrative)
   const chapters = narrative.chapters
-  const totalChapters = chapters.length
 
   const protagonist = characters.find((c) => c.id === narrative.protagonistId)
   const protagonistName = protagonist?.data.name ?? meta.config.protagonistName ?? 'You'
@@ -43,6 +47,53 @@ export function PlayerShell({ story }: Props) {
     phase: 'choosing',
     activeBranchId: null,
   })
+
+  const [generatingText, setGeneratingText] = useState(false)
+  const [textError, setTextError] = useState<string | null>(null)
+
+  const fetchText = useCallback(
+    async (nodeType: 'branch' | 'bottleneck', nodeId: string): Promise<string | null> => {
+      setGeneratingText(true)
+      setTextError(null)
+      try {
+        const res = await fetch(`/api/stories/${meta.id}/generate-text`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nodeType, nodeId }),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Request failed' }))
+          throw new Error(err.error ?? 'Request failed')
+        }
+        const { text } = await res.json()
+
+        // Patch the local narrative state so re-renders use the real text
+        setNarrative((prev) => {
+          const chapters = prev.chapters.map((ch) => {
+            if (nodeType === 'bottleneck' && ch.bottleneck.id === nodeId) {
+              return { ...ch, bottleneck: { ...ch.bottleneck, text } }
+            }
+            if (nodeType === 'branch') {
+              const branches = ch.branches.map((b) =>
+                b.id === nodeId ? { ...b, fullText: text } : b
+              )
+              return { ...ch, branches }
+            }
+            return ch
+          })
+          return { ...prev, chapters }
+        })
+
+        return text
+      } catch (err) {
+        setTextError(err instanceof Error ? err.message : 'Failed to generate text')
+        return null
+      } finally {
+        setGeneratingText(false)
+      }
+    },
+    [meta.id]
+  )
 
   const currentChapter = chapters[state.currentChapterIndex]
   const progress = Math.round((state.currentChapterIndex / totalChapters) * 100)
@@ -81,6 +132,15 @@ export function PlayerShell({ story }: Props) {
 
   if (!currentChapter) return null
 
+  // ── Branch reading phase ──────────────────────────────────────────────────
+  const activeBranch =
+    state.phase === 'reading_branch'
+      ? currentChapter.branches.find((b) => b.id === state.activeBranchId)
+      : undefined
+
+  const branchText = activeBranch?.fullText ?? ''
+  const bottleneckText = currentChapter.bottleneck.text
+
   return (
     <div className="flex flex-col gap-6">
       {/* Chapter header + progress */}
@@ -105,6 +165,13 @@ export function PlayerShell({ story }: Props) {
         </div>
       </div>
 
+      {/* Error banner */}
+      {textError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {textError}
+        </div>
+      )}
+
       {/* Content */}
       {state.phase === 'choosing' && (
         <ChoicePanel
@@ -113,38 +180,48 @@ export function PlayerShell({ story }: Props) {
         />
       )}
 
-      {state.phase === 'reading_branch' && (() => {
-        const branch = currentChapter.branches.find((b) => b.id === state.activeBranchId)
-        if (!branch) return null
-        return (
+      {state.phase === 'reading_branch' && activeBranch && (
+        branchText === PENDING_TEXT ? (
+          <PendingTextCard
+            loading={generatingText}
+            onGenerate={() => fetchText('branch', activeBranch.id)}
+          />
+        ) : (
           <SceneDisplay
             speakerName={protagonistName}
-            text={branch.fullText}
+            text={branchText}
             label="branch"
             onContinue={() => dispatch({ type: 'FINISH_BRANCH_READING' })}
             continueLabel="Continue to key event"
           />
         )
-      })()}
+      )}
 
       {state.phase === 'reading_bottleneck' && (
-        <SceneDisplay
-          speakerName="Narrator"
-          text={currentChapter.bottleneck.text}
-          label="bottleneck"
-          onContinue={() =>
-            dispatch({ type: 'FINISH_BOTTLENECK_READING', totalChapters })
-          }
-          continueLabel={
-            state.currentChapterIndex + 1 >= totalChapters
-              ? 'Finish story'
-              : 'Next chapter'
-          }
-        />
+        bottleneckText === PENDING_TEXT ? (
+          <PendingTextCard
+            loading={generatingText}
+            onGenerate={() => fetchText('bottleneck', currentChapter.bottleneck.id)}
+          />
+        ) : (
+          <SceneDisplay
+            speakerName="Narrator"
+            text={bottleneckText}
+            label="bottleneck"
+            onContinue={() =>
+              dispatch({ type: 'FINISH_BOTTLENECK_READING', totalChapters })
+            }
+            continueLabel={
+              state.currentChapterIndex + 1 >= totalChapters
+                ? 'Finish story'
+                : 'Next chapter'
+            }
+          />
+        )
       )}
 
       {/* World state note after bottleneck */}
-      {state.phase === 'reading_bottleneck' && (
+      {state.phase === 'reading_bottleneck' && bottleneckText !== PENDING_TEXT && (
         <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
           <p className="text-xs font-semibold uppercase tracking-wider text-amber-600 mb-1">
             World State
@@ -154,18 +231,45 @@ export function PlayerShell({ story }: Props) {
       )}
 
       {/* Branch effects note */}
-      {state.phase === 'reading_branch' && (() => {
-        const branch = currentChapter.branches.find((b) => b.id === state.activeBranchId)
-        if (!branch?.worldStateEffects) return null
-        return (
-          <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wider text-violet-500 mb-1">
-              Effects
-            </p>
-            <p className="text-sm text-slate-400">{branch.worldStateEffects}</p>
-          </div>
-        )
-      })()}
+      {state.phase === 'reading_branch' && activeBranch?.worldStateEffects && branchText !== PENDING_TEXT && (
+        <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wider text-violet-500 mb-1">
+            Effects
+          </p>
+          <p className="text-sm text-slate-400">{activeBranch.worldStateEffects}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PendingTextCard({
+  loading,
+  onGenerate,
+}: {
+  loading: boolean
+  onGenerate: () => void
+}) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/5 px-6 py-10 flex flex-col items-center gap-4 text-center">
+      {loading ? (
+        <>
+          <div className="h-8 w-8 rounded-full border-2 border-amber-500 border-t-transparent animate-spin" />
+          <p className="text-sm text-slate-400">Generating scene...</p>
+        </>
+      ) : (
+        <>
+          <p className="text-sm text-slate-400">
+            This scene has not been written yet. Generate it now?
+          </p>
+          <button
+            onClick={onGenerate}
+            className="rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold px-5 py-2 transition-colors"
+          >
+            Generate scene
+          </button>
+        </>
+      )}
     </div>
   )
 }

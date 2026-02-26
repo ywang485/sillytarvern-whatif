@@ -1,3 +1,7 @@
+// Sentinel value stored in Storylet.fullText / Bottleneck.text when prose
+// has not been generated yet and will be produced on demand at playtime.
+export const PENDING_TEXT = '__PENDING__'
+
 // ─── Generation Status ───────────────────────────────────────────────────────
 
 export type GenerationStatus =

@@ -44,9 +44,7 @@ export async function POST(req: NextRequest) {
     const detectedMime = fileName.endsWith('.pdf') ? 'application/pdf' : 'text/plain'
 
     const storyId = await createStory(
-      fileBuffer,
       fileName,
-      detectedMime,
       branchesPerChapter,
       protagonistNameOverride || undefined
     )

@@ -1,4 +1,5 @@
 import { callClaude } from '@/lib/claude'
+import { PENDING_TEXT } from '@/types'
 import type { Chapter, Bottleneck, NarrativeStructure } from '@/types'
 import { nanoid } from 'nanoid'
 
@@ -8,7 +9,6 @@ interface RawChapter {
   synopsis: string
   bottleneck: {
     title: string
-    text: string
     worldStateAfter: string
   }
 }
@@ -32,7 +32,6 @@ For each chapter extract:
 - synopsis: a one-paragraph summary of the chapter's narrative arc
 - bottleneck: the single most important, unavoidable plot event that every path through this chapter must converge at. This is a mandatory story beat that cannot be skipped. For the bottleneck provide:
   - title: short name for the event (e.g. "The Bridge Collapse", "First Encounter with the Dragon")
-  - text: a full prose scene of approximately 400 words depicting this pivotal moment, written in second-person present tense ("You witness...", "The moment arrives...")
   - worldStateAfter: 1-2 sentences describing the canonical world state immediately after this event
 
 Also extract:
@@ -52,7 +51,6 @@ Return JSON matching this exact schema:
       "synopsis": "string",
       "bottleneck": {
         "title": "string",
-        "text": "string",
         "worldStateAfter": "string"
       }
     }
@@ -75,7 +73,7 @@ ${sourceText}
     bottleneck: {
       id: nanoid(),
       title: ch.bottleneck.title,
-      text: ch.bottleneck.text,
+      text: PENDING_TEXT,
       worldStateAfter: ch.bottleneck.worldStateAfter,
     } as Bottleneck,
     branches: [],

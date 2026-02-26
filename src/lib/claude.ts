@@ -4,7 +4,50 @@ const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 })
 
-const MODEL = 'claude-sonnet-4-6'
+const MODEL = 'claude-haiku-4-5'
+
+let firstCall = true
+
+export async function callClaudeText(
+  systemPrompt: string,
+  userPrompt: string
+): Promise<string> {
+  if (firstCall) {
+    process.stdout.write(`[Claude] Connecting to ${MODEL}...\n`)
+  }
+
+  let response: Anthropic.Message
+  try {
+    response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      temperature: 1,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }],
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    process.stdout.write(`[Claude] Connection FAILED: ${msg}\n`)
+    throw err
+  }
+
+  if (firstCall) {
+    process.stdout.write(`[Claude] Connected successfully.\n`)
+    firstCall = false
+  }
+
+  const text =
+    response.content[0].type === 'text' ? response.content[0].text : ''
+
+  const sep = '─'.repeat(80) + '\n'
+  process.stdout.write('\n' + sep)
+  process.stdout.write(`[Claude] (text) stop_reason=${response.stop_reason}  tokens=${response.usage.input_tokens}in/${response.usage.output_tokens}out\n`)
+  process.stdout.write(sep)
+  process.stdout.write(text + '\n')
+  process.stdout.write(sep + '\n')
+
+  return text.trim()
+}
 
 export async function callClaude(
   systemPrompt: string,
@@ -33,16 +76,39 @@ export async function callClaude(
       })
     }
 
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: 8192,
-      temperature: 0,
-      system: fullSystem,
-      messages,
-    })
+    if (firstCall) {
+      process.stdout.write(`[Claude] Connecting to ${MODEL}...\n`)
+    }
+
+    let response: Anthropic.Message
+    try {
+      response = await client.messages.create({
+        model: MODEL,
+        max_tokens: 8192,
+        temperature: 0,
+        system: fullSystem,
+        messages,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stdout.write(`[Claude] Connection FAILED: ${msg}\n`)
+      throw err
+    }
+
+    if (firstCall) {
+      process.stdout.write(`[Claude] Connected successfully.\n`)
+      firstCall = false
+    }
 
     const text =
       response.content[0].type === 'text' ? response.content[0].text : ''
+
+    const sep = '─'.repeat(80) + '\n'
+    process.stdout.write('\n' + sep)
+    process.stdout.write(`[Claude] attempt=${attempt + 1}  stop_reason=${response.stop_reason}  tokens=${response.usage.input_tokens}in/${response.usage.output_tokens}out\n`)
+    process.stdout.write(sep)
+    process.stdout.write(text + '\n')
+    process.stdout.write(sep + '\n')
 
     // Strip any accidental markdown fences
     const cleaned = text

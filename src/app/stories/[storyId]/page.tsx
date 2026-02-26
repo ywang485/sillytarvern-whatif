@@ -75,7 +75,13 @@ export default async function StoryHubPage({
                 {label}
               </Link>
             ))}
-            <div className="ml-auto pb-2">
+            <div className="ml-auto pb-2 flex items-center gap-2">
+              <a
+                href={`/api/stories/${storyId}/download-json`}
+                className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:border-white/30 transition-colors"
+              >
+                Download JSON ↓
+              </a>
               <a
                 href={`/api/stories/${storyId}/export`}
                 className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-slate-400 hover:text-white hover:border-white/30 transition-colors"

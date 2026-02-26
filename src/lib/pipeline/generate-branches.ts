@@ -1,11 +1,11 @@
 import { callClaude } from '@/lib/claude'
+import { PENDING_TEXT } from '@/types'
 import type { Chapter, Storylet, CharacterCard } from '@/types'
 import { nanoid } from 'nanoid'
 
 interface RawStorylет {
   title: string
   summary: string
-  fullText: string
   worldStateEffects: string
   involvedCharacterNames: string[]
 }
@@ -27,19 +27,32 @@ export async function generateBranchesForChapters(
   chapters: Chapter[],
   characters: CharacterCard[],
   branchCount: number,
-  protagonistName: string
+  protagonistName: string,
+  previousBottleneckWorldState: string | null
 ): Promise<Chapter[]> {
   const systemPrompt = `You are a creative writer specializing in branching interactive fiction. You write engaging, distinct storylets that offer players meaningful choices while all converging to the same narrative bottleneck.`
 
-  const chaptersPayload = chapters.map((ch) => ({
-    chapterNumber: ch.chapterNumber,
-    title: ch.title,
-    synopsis: ch.synopsis,
-    bottleneck: {
-      title: ch.bottleneck.title,
-      worldStateAfter: ch.bottleneck.worldStateAfter,
-    },
-  }))
+  // Compute the entry world state for each chapter in this batch.
+  // The first chapter starts from the previous batch's final bottleneck (or story opening).
+  // Each subsequent chapter in the batch starts from the preceding chapter's bottleneck.
+  const chaptersPayload = chapters.map((ch, idx) => {
+    let entryWorldState: string
+    if (idx === 0) {
+      entryWorldState = previousBottleneckWorldState ?? 'The story is just beginning.'
+    } else {
+      entryWorldState = chapters[idx - 1].bottleneck.worldStateAfter
+    }
+    return {
+      chapterNumber: ch.chapterNumber,
+      title: ch.title,
+      synopsis: ch.synopsis,
+      entryWorldState,
+      bottleneck: {
+        title: ch.bottleneck.title,
+        worldStateAfter: ch.bottleneck.worldStateAfter,
+      },
+    }
+  })
 
   const userPrompt = `You are writing branching interactive fiction. For each chapter below, create ${branchCount} DISTINCT branch paths (storylets).
 
@@ -49,17 +62,15 @@ AVAILABLE CHARACTERS:
 ${buildCharacterSummary(characters)}
 
 RULES FOR EACH BRANCH:
+- Each branch BEGINS from the chapter's entryWorldState (the canonical world state when the chapter opens)
 - Each branch must offer a meaningfully DIFFERENT approach or experience (not just cosmetically different)
-- All branches must converge NATURALLY to the chapter's bottleneck event
-- Write in second-person present tense ("You decide to...", "You notice...", "As you...")
-- Each fullText should be approximately 300-400 words of immersive prose
+- All branches must converge NATURALLY at the chapter's bottleneck event, leaving the world in the bottleneck's worldStateAfter
 - Include at least one other character from the list in each branch
-- The worldStateEffects should describe mechanical consequences (skills used, relationships changed, items gained/lost, etc.)
+- The worldStateEffects should describe what changed between entryWorldState and the bottleneck (skills used, relationships changed, items gained/lost, etc.)
 
 For each chapter, generate exactly ${branchCount} branches. Each branch must have:
 - title: a short action label shown to the player as a choice (5-8 words, starts with a verb, e.g. "Sneak through the service tunnels")
 - summary: 2-3 sentences describing this path shown to the player before they choose (should help them make an informed decision)
-- fullText: full prose scene (~350 words) in second-person present tense
 - worldStateEffects: 1-2 sentences describing narrative/mechanical effects (e.g. "Stealth approach: avoided combat, gained access card, guard trust decreased")
 - involvedCharacterNames: list of character names from the AVAILABLE CHARACTERS list who appear in this branch
 
@@ -75,7 +86,6 @@ Return JSON:
         {
           "title": "string",
           "summary": "string",
-          "fullText": "string",
           "worldStateEffects": "string",
           "involvedCharacterNames": ["string"]
         }
@@ -104,7 +114,7 @@ Return JSON:
       id: nanoid(),
       title: b.title,
       summary: b.summary,
-      fullText: b.fullText,
+      fullText: PENDING_TEXT,
       worldStateEffects: b.worldStateEffects,
       involvedCharacterIds: b.involvedCharacterNames
         .map((name) => charIdByName.get(name.toLowerCase()))
